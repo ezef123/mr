@@ -1,8 +1,9 @@
 /* =========================================================================
-   МОЯ РЕСПУБЛИКА — полный app.js (Firebase Auth + Realtime DB)
+   МОЯ РЕСПУБЛИКА — полный app.js (Auth + DB + верификация)
    ========================================================================= */
 
 let meUid = null;
+let isAdmin = false;
 let listenersAttached = false;
 let registrationInProgress = false;
 
@@ -20,9 +21,7 @@ const state = {
 };
 
 /* ------------------------- Авторизация: UI ------------------------- */
-function authError(msg){
-  $('#authError').textContent = msg || '';
-}
+function authError(msg){ $('#authError').textContent = msg || ''; }
 
 document.querySelectorAll('[data-authtab]').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -45,16 +44,9 @@ $('#loginForm').addEventListener('submit', async e => {
 
   const btn = e.target.querySelector('button[type="submit"]');
   btn.disabled = true; btn.textContent = 'Входим...';
-
-  try {
-    await auth.signInWithEmailAndPassword(email, pass);
-    // Дальше onAuthStateChanged → loadAppForUser
-  } catch (err){
-    console.error(err);
-    authError(firebaseErrorRu(err));
-  } finally {
-    btn.disabled = false; btn.textContent = 'Войти';
-  }
+  try { await auth.signInWithEmailAndPassword(email, pass); }
+  catch (err){ console.error(err); authError(firebaseErrorRu(err)); }
+  finally { btn.disabled = false; btn.textContent = 'Войти'; }
 });
 
 /* ---------- РЕГИСТРАЦИЯ ---------- */
@@ -79,53 +71,34 @@ $('#registerForm').addEventListener('submit', async e => {
   registrationInProgress = true;
 
   try {
-    // 0. Быстрая проверка занятости ника (окончательная — в транзакции ниже)
     const nameSnap = await db.ref('usernames/' + usernameLower).get();
-    if (nameSnap.exists()){
-      authError('Этот никнейм уже занят');
-      return;
-    }
+    if (nameSnap.exists()){ authError('Этот никнейм уже занят'); return; }
 
-    // 1. Создаём auth-пользователя
     const cred = await auth.createUserWithEmailAndPassword(email, pass);
     const uid = cred.user.uid;
 
     try {
-      // 2. СНАЧАЛА профиль — иначе validate на usernames не пройдёт
       await db.ref('users/' + uid).set({
-        uid,
-        username: usernameRaw,
-        usernameLower,
-        displayName,
-        bio: '',
-        avatar: '',
-        createdAt: Date.now()
+        uid, username: usernameRaw, usernameLower, displayName,
+        bio: '', avatar: '', createdAt: Date.now()
       });
 
-      // 3. ПОТОМ резервируем ник — users/{uid}/usernameLower уже есть
-      const tx = await db.ref('usernames/' + usernameLower).transaction(cur => {
-        return cur === null ? uid : undefined;
-      });
+      const tx = await db.ref('usernames/' + usernameLower).transaction(cur =>
+        cur === null ? uid : undefined
+      );
       if (!tx.committed) throw new Error('Этот никнейм только что заняли — выберите другой');
 
       try { await cred.user.updateProfile({ displayName }); } catch {}
-
       toast('Добро пожаловать в Республику Жакид! 🏛');
-
-      // 4. Запускаем приложение вручную:
-      //    onAuthStateChanged проигнорирует этот вызов из-за registrationInProgress
       await loadAppForUser(uid);
-
     } catch (err) {
-      // Откат при любой ошибке после создания auth-пользователя
       try { await db.ref('users/' + uid).remove(); } catch {}
       try { await db.ref('usernames/' + usernameLower).remove(); } catch {}
       try { await cred.user.delete(); } catch {}
       throw err;
     }
   } catch (err){
-    console.error(err);
-    authError(firebaseErrorRu(err));
+    console.error(err); authError(firebaseErrorRu(err));
   } finally {
     btn.disabled = false; btn.textContent = 'Создать аккаунт';
     registrationInProgress = false;
@@ -135,19 +108,15 @@ $('#registerForm').addEventListener('submit', async e => {
 /* ------------------------- Слушатель Auth ------------------------- */
 auth.onAuthStateChanged(async user => {
   if (!user){
-    meUid = null;
+    meUid = null; isAdmin = false;
     $('#app').classList.add('hidden');
     $('#authScreen').classList.remove('hidden');
     return;
   }
-
-  // Регистрация идёт — она сама вызовет loadAppForUser в конце
   if (registrationInProgress) return;
-
   await loadAppForUser(user.uid);
 });
 
-/* Загрузка профиля с ретраем (на случай, если запись ещё в пути) */
 async function loadAppForUser(uid){
   meUid = uid;
 
@@ -156,17 +125,20 @@ async function loadAppForUser(uid){
     try {
       snap = await db.ref('users/' + uid).get();
       if (snap.exists()) break;
-    } catch (e){
-      console.warn('profile fetch failed:', e && e.message);
-    }
+    } catch (e){ console.warn('profile fetch failed:', e && e.message); }
     await new Promise(r => setTimeout(r, 200));
   }
-
   if (!snap || !snap.exists()){
     toast('Профиль не найден. Войдите заново.');
     try { await auth.signOut(); } catch {}
     return;
   }
+
+  // Проверка админ-статуса
+  try {
+    const a = await db.ref('config/admins/' + uid).get();
+    isAdmin = a.exists() && a.val() === true;
+  } catch (e){ isAdmin = false; }
 
   state.me = snap.val();
   state.users[meUid] = state.me;
@@ -208,11 +180,17 @@ function render(){
   if (!me) return;
   state.me = me;
 
+  // Кнопка «Админ» — только для админов
+  const navAdmin = document.getElementById('navAdmin');
+  if (navAdmin) navAdmin.classList.toggle('hidden', !isAdmin);
+
   $('#userCard').innerHTML = `
     <div class="user-card-inner" data-action="open-profile" data-uid="${esc(meUid)}">
       ${avatarHtml(me, 'avatar-sm')}
       <div style="min-width:0">
-        <div class="name" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(me.displayName)}</div>
+        <div class="name" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+          ${esc(me.displayName)}${verifiedBadge(me)}
+        </div>
         <div class="handle">@${esc(me.username)}</div>
       </div>
     </div>`;
@@ -224,15 +202,21 @@ function render(){
     a.classList.toggle('active', a.dataset.view === state.view)
   );
 
-  const views = { feed: '#viewFeed', profile: '#viewProfile', people: '#viewPeople', notifications: '#viewNotifications' };
-  Object.entries(views).forEach(([k, sel]) =>
-    $(sel).classList.toggle('hidden', state.view !== k)
-  );
+  const views = {
+    feed: '#viewFeed', profile: '#viewProfile',
+    people: '#viewPeople', notifications: '#viewNotifications',
+    admin: '#viewAdmin'
+  };
+  Object.entries(views).forEach(([k, sel]) => {
+    const el = $(sel);
+    if (el) el.classList.toggle('hidden', state.view !== k);
+  });
 
-  if (state.view === 'feed') renderFeedList();
-  if (state.view === 'profile') renderProfile();
-  if (state.view === 'people') renderPeople();
+  if (state.view === 'feed')          renderFeedList();
+  if (state.view === 'profile')       renderProfile();
+  if (state.view === 'people')        renderPeople();
   if (state.view === 'notifications') renderNotifications();
+  if (state.view === 'admin')         renderAdmin();
 
   renderRight();
 }
@@ -241,7 +225,6 @@ function render(){
 function sortedPosts(){
   return Object.values(state.posts).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 }
-
 function isFollowing(uid){
   const me = myUser();
   return !!(me.following && me.following[uid]);
@@ -259,7 +242,6 @@ function renderFeedList(){
   if (state.feedTab === 'following'){
     posts = posts.filter(p => p.author === meUid || isFollowing(p.author));
   }
-
   if (!posts.length){
     list.innerHTML = `<div class="empty panel">Пока пусто. Опубликуйте первую запись Республики! 🏛</div>`;
     return;
@@ -268,9 +250,7 @@ function renderFeedList(){
 }
 
 function postCardHTML(p){
-  const author = state.users[p.author] || {
-    uid: p.author, displayName: 'Гражданин', username: 'unknown'
-  };
+  const author = state.users[p.author] || { uid: p.author, displayName: 'Гражданин', username: 'unknown' };
   const likes = p.likes || {};
   const likeCount = Object.keys(likes).length;
   const liked = !!likes[meUid];
@@ -283,7 +263,9 @@ function postCardHTML(p){
     <div class="post-head">
       <div class="clickable" data-action="open-profile" data-uid="${esc(p.author)}">${avatarHtml(author, 'avatar-md')}</div>
       <div class="post-meta">
-        <div class="name clickable" data-action="open-profile" data-uid="${esc(p.author)}">${esc(author.displayName)}</div>
+        <div class="name clickable" data-action="open-profile" data-uid="${esc(p.author)}">
+          ${esc(author.displayName)}${verifiedBadge(author)}
+        </div>
         <div class="handle">@${esc(author.username)} · ${timeAgo(p.createdAt)}</div>
       </div>
       ${mine ? `<button class="icon-btn" data-action="delete-post" data-id="${esc(p.id)}" title="Удалить запись">🗑</button>` : ''}
@@ -344,6 +326,7 @@ function renderProfile(){
   }
 
   const isMe = uid === meUid;
+  const canVerify = isAdmin && !isMe;
   const followers = Object.values(state.users).filter(x => x.following && x.following[uid]).length;
   const posts = sortedPosts().filter(p => p.author === uid);
 
@@ -371,14 +354,22 @@ function renderProfile(){
       ${isFollowing(uid) ? 'Отписаться' : 'Подписаться'}
     </button>`;
 
+  const verifyBtn = canVerify ? `
+    <button class="btn ghost"
+            data-action="toggle-verify"
+            data-uid="${esc(uid)}"
+            data-verified="${u.verified === true}">
+      ${u.verified === true ? '✗ Снять галочку' : '✓ Подтвердить аккаунт'}
+    </button>` : '';
+
   wrap.innerHTML = `
     <div class="profile-head panel">
       <div class="profile-cover"></div>
       <div class="profile-body">
         ${avatarHtml(u, 'avatar-xl')}
         <div class="profile-info">
-          <h2>${esc(u.displayName)}</h2>
-          <div class="handle">@${esc(u.username)}${isMe ? ' · это вы' : ''}</div>
+          <h2>${esc(u.displayName)}${verifiedBadge(u)}</h2>
+          <div class="handle">@${esc(u.username)}${isMe ? ' · это вы' : ''}${u.verified ? ' · подтверждён' : ''}</div>
           <div class="bio">${u.bio ? esc(u.bio) : '<span class="muted">Без описания</span>'}</div>
           <div class="stats">
             <div><b>${posts.length}</b> записей</div>
@@ -386,8 +377,9 @@ function renderProfile(){
             <div><b>${Object.keys(u.following || {}).length}</b> подписок</div>
           </div>
         </div>
-        <div class="profile-actions">
+        <div class="profile-actions" style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
           ${isMe ? '<button class="btn ghost" data-action="edit-profile">Редактировать</button>' : followBtn}
+          ${verifyBtn}
         </div>
       </div>
     </div>
@@ -432,7 +424,7 @@ function renderPeopleList(){
       <div class="people-row">
         ${avatarHtml(u, 'avatar-md')}
         <div class="info" data-action="open-profile" data-uid="${esc(u.uid)}">
-          <div class="name">${esc(u.displayName)}</div>
+          <div class="name">${esc(u.displayName)}${verifiedBadge(u)}</div>
           <div class="handle">@${esc(u.username)}${u.bio ? ' · ' + esc(u.bio.slice(0, 50)) : ''}</div>
         </div>
         <button class="btn sm ${f ? 'ghost' : 'primary'}" data-action="follow" data-uid="${esc(u.uid)}">
@@ -445,19 +437,15 @@ function renderPeopleList(){
 /* ---------- Уведомления ---------- */
 function renderNotifications(){
   const items = [];
-
   Object.values(state.posts).forEach(p => {
     if (p.author !== meUid) return;
-
     Object.entries(p.likes || {}).forEach(([uid, ts]) => {
       if (uid !== meUid) items.push({ type: 'like', from: uid, post: p, time: ts || 0 });
     });
-
     Object.values(p.comments || {}).forEach(c => {
       if (c.author !== meUid) items.push({ type: 'comment', from: c.author, post: p, time: c.createdAt || 0, text: c.text });
     });
   });
-
   items.sort((a, b) => b.time - a.time);
 
   const wrap = $('#viewNotifications');
@@ -465,7 +453,6 @@ function renderNotifications(){
     wrap.innerHTML = `<div class="empty panel">Пока тихо. Лайки и комментарии появятся здесь 🔔</div>`;
     return;
   }
-
   wrap.innerHTML = `<div class="panel"><h2>Уведомления</h2></div>` +
     items.slice(0, 60).map(it => {
       const u = state.users[it.from] || { displayName: 'Гражданин', username: 'unknown' };
@@ -484,6 +471,45 @@ function renderNotifications(){
           </div>
         </div>`;
     }).join('');
+}
+
+/* ---------- Админ-панель ---------- */
+function renderAdmin(){
+  const wrap = $('#viewAdmin');
+  if (!wrap) return;
+
+  if (!isAdmin){
+    wrap.innerHTML = `<div class="empty panel">Раздел только для администраторов Республики</div>`;
+    return;
+  }
+
+  const users = Object.values(state.users)
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+  wrap.innerHTML = `
+    <div class="panel">
+      <h2>🛡 Админ-панель</h2>
+      <p class="muted small" style="margin:6px 0 0">
+        Выдавайте и снимайте синюю галочку подтверждённого аккаунта.
+      </p>
+    </div>
+    <div class="people-list">
+      ${users.map(u => `
+        <div class="people-row">
+          ${avatarHtml(u, 'avatar-md')}
+          <div class="info" data-action="open-profile" data-uid="${esc(u.uid)}">
+            <div class="name">${esc(u.displayName)}${verifiedBadge(u)}</div>
+            <div class="handle">@${esc(u.username)}${u.verified ? ' · подтверждён' : ''}${u.uid === meUid ? ' · это вы' : ''}</div>
+          </div>
+          <button class="btn sm ${u.verified ? 'ghost' : 'primary'}"
+                  data-action="toggle-verify"
+                  data-uid="${esc(u.uid)}"
+                  data-verified="${u.verified === true}">
+            ${u.verified ? 'Снять' : 'Подтвердить'}
+          </button>
+        </div>
+      `).join('')}
+    </div>`;
 }
 
 /* ---------- Правая панель ---------- */
@@ -523,7 +549,7 @@ function miniUserHTML(u){
     <div class="mini-user">
       <div class="clickable" data-action="open-profile" data-uid="${esc(u.uid)}">${avatarHtml(u, 'avatar-sm')}</div>
       <div class="mini-info" data-action="open-profile" data-uid="${esc(u.uid)}">
-        <div class="name">${esc(u.displayName)}</div>
+        <div class="name">${esc(u.displayName)}${verifiedBadge(u)}</div>
         <div class="handle">@${esc(u.username)}</div>
       </div>
       <button class="btn sm ${f ? 'ghost' : 'primary'}" data-action="follow" data-uid="${esc(u.uid)}">
@@ -540,6 +566,7 @@ document.addEventListener('click', async e => {
 
   try {
     switch (action){
+
       case 'nav': {
         e.preventDefault();
         state.view = el.dataset.view;
@@ -650,6 +677,14 @@ document.addEventListener('click', async e => {
         break;
       }
 
+      case 'toggle-verify': {
+        const uid = el.dataset.uid;
+        const cur = el.dataset.verified === 'true';
+        await db.ref('users/' + uid).update({ verified: !cur });
+        toast(!cur ? 'Галочка выдана ✓' : 'Галочка снята');
+        break;
+      }
+
       case 'logout': await logout(); break;
     }
   } catch (err){
@@ -664,13 +699,7 @@ async function publish(){
   if (!text && !image) return toast('Напишите что-нибудь');
 
   const ref = db.ref('posts').push();
-  await ref.set({
-    id: ref.key,
-    author: meUid,
-    text,
-    image,
-    createdAt: Date.now()
-  });
+  await ref.set({ id: ref.key, author: meUid, text, image, createdAt: Date.now() });
 
   $('#postText').value = '';
   $('#postImage').value = '';
@@ -688,13 +717,8 @@ document.addEventListener('input', e => {
   if (t.dataset && t.dataset.draft){
     state.commentDrafts[t.dataset.draft] = t.value;
   }
-  if (t.id === 'peopleSearch'){
-    state.search = t.value;
-    renderPeopleList();
-  }
-  if (t.id === 'globalSearch'){
-    renderSearchResults(t.value);
-  }
+  if (t.id === 'peopleSearch'){ state.search = t.value; renderPeopleList(); }
+  if (t.id === 'globalSearch'){ renderSearchResults(t.value); }
 });
 
 document.addEventListener('keydown', e => {
