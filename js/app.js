@@ -3,6 +3,8 @@
    ========================================================================= */
 
 let meUid = null;
+let listenersAttached = false;
+let registrationInProgress = false;
 
 const state = {
   me: null,
@@ -46,6 +48,7 @@ $('#loginForm').addEventListener('submit', async e => {
 
   try {
     await auth.signInWithEmailAndPassword(email, pass);
+    // Дальше onAuthStateChanged → loadAppForUser
   } catch (err){
     console.error(err);
     authError(firebaseErrorRu(err));
@@ -73,24 +76,22 @@ $('#registerForm').addEventListener('submit', async e => {
   const usernameLower = usernameRaw.toLowerCase();
   const btn = e.target.querySelector('button[type="submit"]');
   btn.disabled = true; btn.textContent = 'Создаём...';
+  registrationInProgress = true;
 
   try {
+    // 0. Быстрая проверка занятости ника (окончательная — в транзакции ниже)
     const nameSnap = await db.ref('usernames/' + usernameLower).get();
     if (nameSnap.exists()){
       authError('Этот никнейм уже занят');
       return;
     }
 
+    // 1. Создаём auth-пользователя
     const cred = await auth.createUserWithEmailAndPassword(email, pass);
     const uid = cred.user.uid;
 
     try {
-      const tx = await db.ref('usernames/' + usernameLower).transaction(cur => {
-        if (cur === null) return uid;
-        return;
-      });
-      if (!tx.committed) throw new Error('Этот никнейм только что заняли — выберите другой');
-
+      // 2. СНАЧАЛА профиль — иначе validate на usernames не пройдёт
       await db.ref('users/' + uid).set({
         uid,
         username: usernameRaw,
@@ -98,16 +99,27 @@ $('#registerForm').addEventListener('submit', async e => {
         displayName,
         bio: '',
         avatar: '',
-        createdAt: Date.now(),
-        following: null
+        createdAt: Date.now()
       });
+
+      // 3. ПОТОМ резервируем ник — users/{uid}/usernameLower уже есть
+      const tx = await db.ref('usernames/' + usernameLower).transaction(cur => {
+        return cur === null ? uid : undefined;
+      });
+      if (!tx.committed) throw new Error('Этот никнейм только что заняли — выберите другой');
 
       try { await cred.user.updateProfile({ displayName }); } catch {}
 
       toast('Добро пожаловать в Республику Жакид! 🏛');
-    } catch (err){
-      try { await db.ref('usernames/' + usernameLower).remove(); } catch {}
+
+      // 4. Запускаем приложение вручную:
+      //    onAuthStateChanged проигнорирует этот вызов из-за registrationInProgress
+      await loadAppForUser(uid);
+
+    } catch (err) {
+      // Откат при любой ошибке после создания auth-пользователя
       try { await db.ref('users/' + uid).remove(); } catch {}
+      try { await db.ref('usernames/' + usernameLower).remove(); } catch {}
       try { await cred.user.delete(); } catch {}
       throw err;
     }
@@ -116,6 +128,7 @@ $('#registerForm').addEventListener('submit', async e => {
     authError(firebaseErrorRu(err));
   } finally {
     btn.disabled = false; btn.textContent = 'Создать аккаунт';
+    registrationInProgress = false;
   }
 });
 
@@ -128,34 +141,44 @@ auth.onAuthStateChanged(async user => {
     return;
   }
 
-  meUid = user.uid;
+  // Регистрация идёт — она сама вызовет loadAppForUser в конце
+  if (registrationInProgress) return;
 
-  try {
-    const snap = await db.ref('users/' + meUid).get();
-
-    if (!snap.exists()){
-      toast('Профиль не найден, попробуйте зарегистрироваться заново');
-      await auth.signOut();
-      return;
-    }
-
-    state.me = snap.val();
-    state.users[meUid] = state.me;
-    if (!state.profileUid) state.profileUid = meUid;
-
-    attachListeners();
-    $('#authScreen').classList.add('hidden');
-    $('#app').classList.remove('hidden');
-    render();
-  } catch (err){
-    console.error(err);
-    authError('Ошибка загрузки профиля: ' + firebaseErrorRu(err));
-  }
+  await loadAppForUser(user.uid);
 });
 
-/* ------------------------- Слушатели базы ------------------------- */
-let listenersAttached = false;
+/* Загрузка профиля с ретраем (на случай, если запись ещё в пути) */
+async function loadAppForUser(uid){
+  meUid = uid;
 
+  let snap = null;
+  for (let i = 0; i < 15; i++){
+    try {
+      snap = await db.ref('users/' + uid).get();
+      if (snap.exists()) break;
+    } catch (e){
+      console.warn('profile fetch failed:', e && e.message);
+    }
+    await new Promise(r => setTimeout(r, 200));
+  }
+
+  if (!snap || !snap.exists()){
+    toast('Профиль не найден. Войдите заново.');
+    try { await auth.signOut(); } catch {}
+    return;
+  }
+
+  state.me = snap.val();
+  state.users[meUid] = state.me;
+  if (!state.profileUid) state.profileUid = meUid;
+
+  attachListeners();
+  $('#authScreen').classList.add('hidden');
+  $('#app').classList.remove('hidden');
+  render();
+}
+
+/* ------------------------- Слушатели базы ------------------------- */
 function attachListeners(){
   if (listenersAttached) return;
   listenersAttached = true;
