@@ -205,3 +205,18 @@ textarea{resize:vertical;min-height:64px}
   #userCard{display:none}
   .side-foot{display:none}
 }
+
+/* Верифицированный аккаунт */
+.verified-badge{
+  display:inline-block;
+  width:16px;
+  height:16px;
+  vertical-align:-3px;
+  margin-left:4px;
+  flex:none;
+}
+.people-row .name .verified-badge,
+.post-meta .name .verified-badge{
+  width:15px;
+  height:15px;
+}
