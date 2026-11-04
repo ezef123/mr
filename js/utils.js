@@ -1,35 +1,21 @@
 /* =========================================================================
-   Утилиты: DOM, экранирование, хеши, время, тосты, аватары.
+   Утилиты: DOM, экранирование, хеши (цвета), время, тосты, аватары.
    ========================================================================= */
 
 const $ = (s) => document.querySelector(s);
 
-/** Экранирование HTML */
 function esc(v){
   return String(v == null ? '' : v).replace(/[&<>"']/g, c => (
     { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]
   ));
 }
 
-/** Детерминированный цвет аватара из строки */
 function hashHue(str){
   let h = 0;
   for (let i = 0; i < String(str).length; i++) h = (h * 31 + String(str).charCodeAt(i)) >>> 0;
   return h % 360;
 }
 
-/* ВНИМАНИЕ: это НЕ криптостойкий хеш. Только чтобы пароли не лежали
-   в базе открытым текстом. Для продакшена используйте Firebase Auth. */
-function hashPass(s){
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++){
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193) >>> 0;
-  }
-  return 'fnv1a:' + h.toString(16) + ':' + s.length;
-}
-
-/** Относительное время ("5 мин назад") */
 function timeAgo(ts){
   if (!ts) return '';
   const s = Math.floor((Date.now() - ts) / 1000);
@@ -44,7 +30,6 @@ function timeAgo(ts){
   return new Date(ts).toLocaleDateString('ru-RU');
 }
 
-/** Превращает экранированный текст в кликабельные ссылки и @упоминания */
 function linkify(escapedText){
   return escapedText
     .replace(/(https?:\/\/[^\s]+)/g,
@@ -53,7 +38,6 @@ function linkify(escapedText){
       '$1<a href="#" data-action="open-username" data-username="$2">@$2</a>');
 }
 
-/** Всплывающее сообщение */
 let toastTimer = null;
 function toast(msg){
   const t = $('#toast');
@@ -63,7 +47,6 @@ function toast(msg){
   toastTimer = setTimeout(() => t.classList.remove('show'), 2400);
 }
 
-/** HTML аватара (картинка или буква в цветном круге) */
 function avatarHtml(user, cls){
   const name = (user && (user.displayName || user.username)) || '?';
   if (user && user.avatar){
@@ -74,7 +57,26 @@ function avatarHtml(user, cls){
   return `<div class="avatar ${cls}" style="background:hsl(${hue} 58% 40%)">${esc(initial)}</div>`;
 }
 
-/** Текущий пользователь из state (используется после загрузки) */
 function myUser(){
   return (typeof state !== 'undefined' && (state.users[meUid] || state.me)) || {};
+}
+
+/* Перевод ошибок Firebase Auth на русский */
+function firebaseErrorRu(err){
+  const code = (err && err.code) || '';
+  const map = {
+    'auth/invalid-email':          'Некорректный email',
+    'auth/user-disabled':          'Аккаунт заблокирован',
+    'auth/user-not-found':         'Пользователь с таким email не найден',
+    'auth/wrong-password':         'Неверный пароль',
+    'auth/invalid-credential':     'Неверный email или пароль',
+    'auth/invalid-login-credentials': 'Неверный email или пароль',
+    'auth/email-already-in-use':   'Этот email уже используется',
+    'auth/weak-password':          'Пароль слишком слабый (минимум 6 символов)',
+    'auth/too-many-requests':      'Слишком много попыток, попробуйте позже',
+    'auth/network-request-failed': 'Нет соединения с Firebase',
+    'auth/operation-not-allowed':  'Включите вход по Email/Password в Firebase Console',
+    'auth/requires-recent-login':  'Требуется повторный вход'
+  };
+  return map[code] || (err && err.message) || 'Неизвестная ошибка';
 }
