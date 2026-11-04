@@ -69,7 +69,7 @@
 
     "chats": {
       "$chatId": {
-        ".read": "auth != null && data.child('participants').child(auth.uid).val() === true",
+        ".read": "auth != null && (data.child('participants').child(auth.uid).val() === true || !data.exists())",
         ".write": "auth != null && (data.child('participants').child(auth.uid).val() === true || newData.child('participants').child(auth.uid).val() === true)",
         "participants": {
           "$uid": { ".validate": "newData.isBoolean()" }
@@ -95,6 +95,7 @@
       "$uid": {
         ".read": "auth != null && auth.uid === $uid",
         "$chatId": {
+          ".read": "auth != null && root.child('chats').child($chatId).child('participants').child(auth.uid).val() === true",
           ".write": "auth != null && (auth.uid === $uid || root.child('chats').child($chatId).child('participants').child(auth.uid).val() === true)",
           "other":    { ".validate": "newData.isString()" },
           "lastText": { ".validate": "newData.isString() && newData.val().length <= 100" },
