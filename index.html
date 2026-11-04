@@ -25,7 +25,6 @@
       <button class="tab" data-authtab="register">Регистрация</button>
     </div>
 
-    <!-- ВХОД -->
     <form id="loginForm">
       <div class="field">
         <label>Email</label>
@@ -40,7 +39,6 @@
       <button class="btn primary" style="width:100%;margin-top:6px" type="submit">Войти</button>
     </form>
 
-    <!-- РЕГИСТРАЦИЯ -->
     <form id="registerForm" class="hidden">
       <div class="field">
         <label>Имя и фамилия</label>
@@ -71,13 +69,16 @@
 <!-- ================= ПРИЛОЖЕНИЕ ================= -->
 <div class="layout hidden" id="app">
 
-  <!-- ЛЕВАЯ ПАНЕЛЬ -->
   <aside class="sidebar">
     <div class="logo"><span class="ico">🏛</span><span>Моя<b>Республика</b></span></div>
     <nav class="nav">
       <a class="nav-item active" data-action="nav" data-view="feed">🏠 <span>Лента</span></a>
       <a class="nav-item" data-action="nav" data-view="people">👥 <span>Люди</span></a>
       <a class="nav-item" data-action="nav" data-view="notifications">🔔 <span>Уведомления</span></a>
+      <a class="nav-item" data-action="nav" data-view="messages">
+        💬 <span>Сообщения</span>
+        <span class="nav-badge hidden" id="msgBadge">0</span>
+      </a>
       <a class="nav-item" data-action="nav" data-view="profile">👤 <span>Мой профиль</span></a>
       <a class="nav-item hidden" id="navAdmin" data-action="nav" data-view="admin">🛡 <span>Админ</span></a>
     </nav>
@@ -86,10 +87,8 @@
     <div class="side-foot">Республика Жакид · 2026</div>
   </aside>
 
-  <!-- ЦЕНТР -->
   <main class="main">
 
-    <!-- ЛЕНТА -->
     <section id="viewFeed" class="view">
       <div class="composer panel">
         <div id="composerAvatar"></div>
@@ -111,21 +110,15 @@
       <div id="feedList"></div>
     </section>
 
-    <!-- ПРОФИЛЬ -->
     <section id="viewProfile" class="view hidden"></section>
-
-    <!-- ЛЮДИ -->
     <section id="viewPeople" class="view hidden"></section>
-
-    <!-- УВЕДОМЛЕНИЯ -->
     <section id="viewNotifications" class="view hidden"></section>
-
-    <!-- АДМИН -->
+    <section id="viewMessages" class="view hidden"></section>
+    <section id="viewChat" class="view hidden"></section>
     <section id="viewAdmin" class="view hidden"></section>
 
   </main>
 
-  <!-- ПРАВАЯ ПАНЕЛЬ -->
   <aside class="rightbar">
     <div class="panel">
       <input id="globalSearch" class="search" placeholder="🔍 Поиск людей">
