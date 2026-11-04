@@ -194,10 +194,60 @@ textarea{resize:vertical;min-height:64px}
 }
 .people-row .name .verified-badge,
 .post-meta .name .verified-badge,
-.mini-user .name .verified-badge{
+.mini-user .name .verified-badge,
+.chat-name .verified-badge{
   width:15px;
   height:15px;
 }
+
+/* ---------- Личные сообщения ---------- */
+.nav-badge{
+  background:var(--accent);color:#fff;font-size:11px;font-weight:700;
+  padding:1px 7px;border-radius:10px;margin-left:auto;
+}
+.chat-row{
+  display:flex;align-items:center;gap:12px;padding:12px;
+  background:var(--panel);border:1px solid var(--border);border-radius:12px;
+  margin-bottom:8px;cursor:pointer;transition:.15s;
+}
+.chat-row:hover{background:var(--panel2)}
+.chat-row.unread .chat-name{color:#fff;font-weight:800}
+.chat-info{flex:1;min-width:0}
+.chat-name{
+  font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.chat-preview{
+  font-size:12.5px;color:var(--muted);margin-top:2px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.chat-side{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex:none}
+.chat-time{font-size:11.5px;color:var(--muted)}
+.chat-badge{
+  background:var(--accent);color:#fff;font-size:11px;font-weight:700;
+  min-width:18px;height:18px;border-radius:9px;
+  display:flex;align-items:center;justify-content:center;padding:0 6px;
+}
+.chat-head{
+  display:flex;align-items:center;gap:11px;margin-bottom:12px;
+  position:sticky;top:0;z-index:2;
+}
+.chat-head .icon-btn{font-size:18px;color:var(--text);padding:4px 10px}
+.chat-body{
+  min-height:300px;max-height:60vh;overflow-y:auto;
+  display:flex;flex-direction:column;gap:8px;margin-bottom:12px;
+}
+.msg-row{display:flex;flex-direction:column;align-items:flex-start;max-width:80%}
+.msg-row.mine{align-self:flex-end;align-items:flex-end}
+.msg-bubble{
+  background:var(--panel2);padding:8px 12px;border-radius:14px;
+  border-top-left-radius:4px;font-size:14px;white-space:pre-wrap;word-wrap:break-word;
+}
+.msg-row.mine .msg-bubble{
+  background:var(--accent);border-top-left-radius:14px;border-top-right-radius:4px;
+}
+.msg-time{font-size:11px;color:var(--muted);margin-top:2px;padding:0 4px}
+.chat-input-row{display:flex;gap:8px;align-items:center}
+.chat-input-row input{flex:1}
 
 /* ---------- Тост ---------- */
 #toast{
