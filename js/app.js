@@ -1,11 +1,13 @@
 /* =========================================================================
-   МОЯ РЕСПУБЛИКА — полный app.js (Auth + DB + верификация)
+   МОЯ РЕСПУБЛИКА — полный app.js
+   Auth + Realtime DB + верификация + личные сообщения
    ========================================================================= */
 
 let meUid = null;
 let isAdmin = false;
 let listenersAttached = false;
 let registrationInProgress = false;
+let chatUnsub = null;
 
 const state = {
   me: null,
@@ -17,7 +19,11 @@ const state = {
   feedTab: 'all',
   openComments: {},
   commentDrafts: {},
-  search: ''
+  search: '',
+  userChats: {},
+  chatMessages: {},
+  activeChatId: null,
+  activeChatOther: null
 };
 
 /* ------------------------- Авторизация: UI ------------------------- */
@@ -134,7 +140,6 @@ async function loadAppForUser(uid){
     return;
   }
 
-  // Проверка админ-статуса
   try {
     const a = await db.ref('config/admins/' + uid).get();
     isAdmin = a.exists() && a.val() === true;
@@ -145,6 +150,13 @@ async function loadAppForUser(uid){
   if (!state.profileUid) state.profileUid = meUid;
 
   attachListeners();
+
+  db.ref('userChats/' + meUid).on('value', s => {
+    state.userChats = s.val() || {};
+    updateMessagesBadge();
+    if (state.view === 'messages') renderMessages();
+  });
+
   $('#authScreen').classList.add('hidden');
   $('#app').classList.remove('hidden');
   render();
@@ -169,6 +181,7 @@ function attachListeners(){
 /* ------------------------- Выход ------------------------- */
 async function logout(){
   listenersAttached = false;
+  unsubscribeChatMessages();
   try { await auth.signOut(); } catch (err){ console.error(err); }
   location.reload();
 }
@@ -180,7 +193,6 @@ function render(){
   if (!me) return;
   state.me = me;
 
-  // Кнопка «Админ» — только для админов
   const navAdmin = document.getElementById('navAdmin');
   if (navAdmin) navAdmin.classList.toggle('hidden', !isAdmin);
 
@@ -205,7 +217,7 @@ function render(){
   const views = {
     feed: '#viewFeed', profile: '#viewProfile',
     people: '#viewPeople', notifications: '#viewNotifications',
-    admin: '#viewAdmin'
+    admin: '#viewAdmin', messages: '#viewMessages', chat: '#viewChat'
   };
   Object.entries(views).forEach(([k, sel]) => {
     const el = $(sel);
@@ -217,7 +229,10 @@ function render(){
   if (state.view === 'people')        renderPeople();
   if (state.view === 'notifications') renderNotifications();
   if (state.view === 'admin')         renderAdmin();
+  if (state.view === 'messages')      renderMessages();
+  if (state.view === 'chat')          renderChat();
 
+  updateMessagesBadge();
   renderRight();
 }
 
@@ -352,7 +367,8 @@ function renderProfile(){
     <button class="btn ${isFollowing(uid) ? 'ghost' : 'primary'}"
             data-action="follow" data-uid="${esc(uid)}">
       ${isFollowing(uid) ? 'Отписаться' : 'Подписаться'}
-    </button>`;
+    </button>
+    <button class="btn primary" data-action="open-chat" data-uid="${esc(uid)}">💬 Написать</button>`;
 
   const verifyBtn = canVerify ? `
     <button class="btn ghost"
@@ -512,6 +528,176 @@ function renderAdmin(){
     </div>`;
 }
 
+/* ---------- Личные сообщения ---------- */
+function updateMessagesBadge(){
+  const b = document.getElementById('msgBadge');
+  if (!b) return;
+  const total = Object.values(state.userChats || {})
+    .reduce((s, c) => s + (c.unread || 0), 0);
+  if (total > 0){
+    b.textContent = total > 99 ? '99+' : total;
+    b.classList.remove('hidden');
+  } else {
+    b.classList.add('hidden');
+  }
+}
+
+function renderMessages(){
+  const wrap = $('#viewMessages');
+  if (!wrap) return;
+  const list = Object.values(state.userChats || {})
+    .sort((a, b) => (b.lastAt || 0) - (a.lastAt || 0));
+
+  if (!list.length){
+    wrap.innerHTML = `<div class="empty panel">Пока нет переписок. Откройте чей-нибудь профиль и нажмите «💬 Написать».</div>`;
+    return;
+  }
+
+  wrap.innerHTML = `<div class="panel"><h2>Сообщения</h2></div>` +
+    list.map(c => {
+      const u = state.users[c.other] || { displayName: 'Гражданин', username: '' };
+      const unread = c.unread || 0;
+      return `
+        <div class="chat-row ${unread ? 'unread' : ''}"
+             data-action="open-chat" data-uid="${esc(c.other)}">
+          ${avatarHtml(u, 'avatar-md')}
+          <div class="chat-info">
+            <div class="chat-name">${esc(u.displayName)}${verifiedBadge(u)}</div>
+            <div class="chat-preview">${c.lastFrom === meUid ? 'Вы: ' : ''}${esc((c.lastText || '').slice(0, 60)) || '<i class="muted">Начните переписку</i>'}</div>
+          </div>
+          <div class="chat-side">
+            <div class="chat-time">${timeAgo(c.lastAt)}</div>
+            ${unread ? `<div class="chat-badge">${unread > 9 ? '9+' : unread}</div>` : ''}
+          </div>
+        </div>`;
+    }).join('');
+}
+
+function renderChat(){
+  const wrap = $('#viewChat');
+  if (!wrap) return;
+  const otherUid = state.activeChatOther;
+  const u = state.users[otherUid] || { displayName: 'Гражданин', username: '' };
+  const msgs = Object.values(state.chatMessages || {})
+    .sort((a, b) => a.createdAt - b.createdAt);
+
+  wrap.innerHTML = `
+    <div class="chat-head panel">
+      <button class="icon-btn" data-action="nav" data-view="messages">←</button>
+      <div class="clickable" data-action="open-profile" data-uid="${esc(otherUid)}">${avatarHtml(u, 'avatar-sm')}</div>
+      <div class="chat-info">
+        <div class="chat-name">${esc(u.displayName)}${verifiedBadge(u)}</div>
+        <div class="handle">@${esc(u.username)}</div>
+      </div>
+    </div>
+
+    <div class="panel chat-body" id="chatBody">
+      ${msgs.length
+        ? msgs.map(m => chatMsgHTML(m)).join('')
+        : '<div class="empty">Начните переписку 👋</div>'}
+    </div>
+
+    <div class="panel chat-input-row">
+      <input id="chatInput" placeholder="Сообщение..." maxlength="2000" autocomplete="off">
+      <button class="btn primary" data-action="send-message">→</button>
+    </div>`;
+
+  const body = document.getElementById('chatBody');
+  if (body) body.scrollTop = body.scrollHeight;
+  const input = document.getElementById('chatInput');
+  if (input) input.focus();
+}
+
+function chatMsgHTML(m){
+  const mine = m.from === meUid;
+  return `
+    <div class="msg-row ${mine ? 'mine' : ''}">
+      <div class="msg-bubble">${linkify(esc(m.text))}</div>
+      <div class="msg-time">${timeAgo(m.createdAt)}</div>
+    </div>`;
+}
+
+async function openChatWith(otherUid){
+  if (!otherUid || otherUid === meUid) return;
+  const chatId = chatIdFor(meUid, otherUid);
+
+  const snap = await db.ref('chats/' + chatId).get();
+  if (!snap.exists()){
+    const now = Date.now();
+    await db.ref('chats/' + chatId).set({
+      participants: { [meUid]: true, [otherUid]: true },
+      meta: { lastText: '', lastFrom: '', lastAt: now }
+    });
+    const updates = {};
+    updates[`userChats/${meUid}/${chatId}`]    = { other: otherUid, lastText: '', lastFrom: '', lastAt: now, unread: 0 };
+    updates[`userChats/${otherUid}/${chatId}`] = { other: meUid,    lastText: '', lastFrom: '', lastAt: now, unread: 0 };
+    await db.ref().update(updates);
+  }
+
+  state.view = 'chat';
+  state.activeChatId = chatId;
+  state.activeChatOther = otherUid;
+  subscribeChatMessages(chatId);
+  await markChatRead(chatId);
+  render();
+}
+
+function subscribeChatMessages(chatId){
+  unsubscribeChatMessages();
+  const ref = db.ref(`chats/${chatId}/messages`).limitToLast(100);
+  const cb = ref.on('value', s => {
+    state.chatMessages = s.val() || {};
+    if (state.view === 'chat' && state.activeChatId === chatId){
+      renderChat();
+      markChatRead(chatId);
+    }
+  });
+  chatUnsub = () => ref.off('value', cb);
+}
+
+function unsubscribeChatMessages(){
+  if (chatUnsub){ try { chatUnsub(); } catch {} }
+  chatUnsub = null;
+  state.chatMessages = {};
+}
+
+async function markChatRead(chatId){
+  try { await db.ref(`userChats/${meUid}/${chatId}/unread`).set(0); }
+  catch (e){ console.warn('markChatRead:', e.message); }
+}
+
+async function sendMessage(text){
+  const t = (text || '').trim();
+  if (!t || !state.activeChatId) return;
+  const chatId = state.activeChatId;
+  const other  = state.activeChatOther;
+  const now    = Date.now();
+  const preview = t.slice(0, 60);
+
+  const msgRef = db.ref(`chats/${chatId}/messages`).push();
+  const updates = {};
+  updates[`chats/${chatId}/messages/${msgRef.key}`] = {
+    id: msgRef.key, from: meUid, text: t, createdAt: now
+  };
+  updates[`chats/${chatId}/meta`] = { lastText: preview, lastFrom: meUid, lastAt: now };
+  updates[`userChats/${meUid}/${chatId}`] = {
+    other, lastText: preview, lastFrom: meUid, lastAt: now, unread: 0
+  };
+
+  await db.ref().update(updates);
+
+  await db.ref(`userChats/${other}/${chatId}`).transaction(cur => {
+    const base = cur || { other: meUid, lastText: '', lastFrom: '', lastAt: now, unread: 0 };
+    return {
+      other: meUid,
+      lastText: preview,
+      lastFrom: meUid,
+      lastAt: now,
+      unread: (base.unread || 0) + 1
+    };
+  });
+}
+
 /* ---------- Правая панель ---------- */
 function renderRight(){
   const me = myUser();
@@ -569,7 +755,9 @@ document.addEventListener('click', async e => {
 
       case 'nav': {
         e.preventDefault();
-        state.view = el.dataset.view;
+        const newView = el.dataset.view;
+        if (state.view === 'chat' && newView !== 'chat') unsubscribeChatMessages();
+        state.view = newView;
         state.editing = false;
         if (state.view === 'profile') state.profileUid = meUid;
         render();
@@ -578,6 +766,7 @@ document.addEventListener('click', async e => {
 
       case 'open-profile': {
         e.preventDefault();
+        if (state.view === 'chat') unsubscribeChatMessages();
         state.view = 'profile';
         state.profileUid = el.dataset.uid;
         state.editing = false;
@@ -590,6 +779,7 @@ document.addEventListener('click', async e => {
         e.preventDefault();
         const snap = await db.ref('usernames/' + el.dataset.username.toLowerCase()).get();
         if (snap.exists()){
+          if (state.view === 'chat') unsubscribeChatMessages();
           state.view = 'profile';
           state.profileUid = snap.val();
           state.editing = false;
@@ -685,6 +875,20 @@ document.addEventListener('click', async e => {
         break;
       }
 
+      case 'open-chat': {
+        await openChatWith(el.dataset.uid);
+        break;
+      }
+
+      case 'send-message': {
+        const inp = document.getElementById('chatInput');
+        if (!inp) break;
+        const txt = inp.value;
+        inp.value = '';
+        await sendMessage(txt);
+        break;
+      }
+
       case 'logout': await logout(); break;
     }
   } catch (err){
@@ -725,5 +929,13 @@ document.addEventListener('keydown', e => {
   if (e.ctrlKey && e.key === 'Enter'
       && document.activeElement && document.activeElement.id === 'postText'){
     publish();
+    return;
+  }
+  if (e.key === 'Enter' && !e.shiftKey
+      && document.activeElement && document.activeElement.id === 'chatInput'){
+    e.preventDefault();
+    const txt = document.activeElement.value;
+    document.activeElement.value = '';
+    sendMessage(txt);
   }
 });
