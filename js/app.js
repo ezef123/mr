@@ -1,8 +1,8 @@
 /* =========================================================================
-   МОЯ РЕСПУБЛИКА — основная логика (Firebase Auth + Realtime DB)
+   МОЯ РЕСПУБЛИКА — полный app.js (Firebase Auth + Realtime DB)
    ========================================================================= */
 
-let meUid = null;          // выставляется в onAuthStateChanged
+let meUid = null;
 
 const state = {
   me: null,
@@ -46,7 +46,6 @@ $('#loginForm').addEventListener('submit', async e => {
 
   try {
     await auth.signInWithEmailAndPassword(email, pass);
-    // Дальше сработает onAuthStateChanged и загрузит приложение.
   } catch (err){
     console.error(err);
     authError(firebaseErrorRu(err));
@@ -76,26 +75,22 @@ $('#registerForm').addEventListener('submit', async e => {
   btn.disabled = true; btn.textContent = 'Создаём...';
 
   try {
-    // Мягкая проверка занятости ника (окончательная — в транзакции)
     const nameSnap = await db.ref('usernames/' + usernameLower).get();
-    if (nameSnap.exists()) {
+    if (nameSnap.exists()){
       authError('Этот никнейм уже занят');
       return;
     }
 
-    // 1. Создаём auth-пользователя
     const cred = await auth.createUserWithEmailAndPassword(email, pass);
     const uid = cred.user.uid;
 
     try {
-      // 2. Резервируем никнейм атомарно
       const tx = await db.ref('usernames/' + usernameLower).transaction(cur => {
-        if (cur === null) return uid;   // свободен — занимаем
-        return;                          // уже занят — прерываем
+        if (cur === null) return uid;
+        return;
       });
       if (!tx.committed) throw new Error('Этот никнейм только что заняли — выберите другой');
 
-      // 3. Пишем профиль
       await db.ref('users/' + uid).set({
         uid,
         username: usernameRaw,
@@ -107,13 +102,10 @@ $('#registerForm').addEventListener('submit', async e => {
         following: null
       });
 
-      // 4. Синхронизируем displayName в Auth (не обязательно, но красиво)
       try { await cred.user.updateProfile({ displayName }); } catch {}
 
       toast('Добро пожаловать в Республику Жакид! 🏛');
-      // Дальше onAuthStateChanged сам переключит интерфейс
-    } catch (err) {
-      // Откат: снимаем резерв ника, удаляем профиль и auth-пользователя
+    } catch (err){
       try { await db.ref('usernames/' + usernameLower).remove(); } catch {}
       try { await db.ref('users/' + uid).remove(); } catch {}
       try { await cred.user.delete(); } catch {}
@@ -142,7 +134,6 @@ auth.onAuthStateChanged(async user => {
     const snap = await db.ref('users/' + meUid).get();
 
     if (!snap.exists()){
-      // Крайне редкий случай: auth создан, но профиль не дописан.
       toast('Профиль не найден, попробуйте зарегистрироваться заново');
       await auth.signOut();
       return;
@@ -183,16 +174,11 @@ function attachListeners(){
 /* ------------------------- Выход ------------------------- */
 async function logout(){
   listenersAttached = false;
-  try { await auth.signOut(); }
-  catch (err){ console.error(err); }
+  try { await auth.signOut(); } catch (err){ console.error(err); }
   location.reload();
 }
 
 /* ------------------------- Рендер ------------------------- */
-/* Всё, что ниже — БЕЗ ИЗМЕНЕНИЙ по сравнению с прошлой версией.
-   Только функция render() больше не вызывается до того, как
-   onAuthStateChanged установит meUid и загрузит профиль. */
-
 function render(){
   if (!meUid) return;
   const me = state.users[meUid];
@@ -228,10 +214,300 @@ function render(){
   renderRight();
 }
 
-/* sortedPosts, isFollowing, renderFeedList, postCardHTML, commentsHTML,
-   renderProfile, renderPeople, renderPeopleList, renderNotifications,
-   renderRight, renderSearchResults, miniUserHTML — БЕЗ ИЗМЕНЕНИЙ.
-   Скопируйте их из предыдущего app.js. */
+/* ---------- Лента ---------- */
+function sortedPosts(){
+  return Object.values(state.posts).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+}
+
+function isFollowing(uid){
+  const me = myUser();
+  return !!(me.following && me.following[uid]);
+}
+
+function renderFeedList(){
+  const list = $('#feedList');
+  if (!list) return;
+
+  document.querySelectorAll('[data-action="feed-tab"]').forEach(b =>
+    b.classList.toggle('active', b.dataset.tab === state.feedTab)
+  );
+
+  let posts = sortedPosts();
+  if (state.feedTab === 'following'){
+    posts = posts.filter(p => p.author === meUid || isFollowing(p.author));
+  }
+
+  if (!posts.length){
+    list.innerHTML = `<div class="empty panel">Пока пусто. Опубликуйте первую запись Республики! 🏛</div>`;
+    return;
+  }
+  list.innerHTML = posts.map(postCardHTML).join('');
+}
+
+function postCardHTML(p){
+  const author = state.users[p.author] || {
+    uid: p.author, displayName: 'Гражданин', username: 'unknown'
+  };
+  const likes = p.likes || {};
+  const likeCount = Object.keys(likes).length;
+  const liked = !!likes[meUid];
+  const comments = p.comments ? Object.values(p.comments).sort((a, b) => a.createdAt - b.createdAt) : [];
+  const open = !!state.openComments[p.id];
+  const mine = p.author === meUid;
+
+  return `
+  <article class="post panel">
+    <div class="post-head">
+      <div class="clickable" data-action="open-profile" data-uid="${esc(p.author)}">${avatarHtml(author, 'avatar-md')}</div>
+      <div class="post-meta">
+        <div class="name clickable" data-action="open-profile" data-uid="${esc(p.author)}">${esc(author.displayName)}</div>
+        <div class="handle">@${esc(author.username)} · ${timeAgo(p.createdAt)}</div>
+      </div>
+      ${mine ? `<button class="icon-btn" data-action="delete-post" data-id="${esc(p.id)}" title="Удалить запись">🗑</button>` : ''}
+    </div>
+
+    ${p.text ? `<div class="post-text">${linkify(esc(p.text))}</div>` : ''}
+    ${p.image ? `<img class="post-image" src="${esc(p.image)}" alt="" loading="lazy" onerror="this.style.display='none'">` : ''}
+
+    <div class="post-actions">
+      <button class="act ${liked ? 'liked' : ''}" data-action="like" data-id="${esc(p.id)}">
+        ${liked ? '❤️' : '🤍'} ${likeCount}
+      </button>
+      <button class="act" data-action="toggle-comments" data-id="${esc(p.id)}">💬 ${comments.length}</button>
+      <button class="act" data-action="copy-link" data-id="${esc(p.id)}">🔗</button>
+    </div>
+
+    ${open ? commentsHTML(p, comments) : ''}
+  </article>`;
+}
+
+function commentsHTML(p, comments){
+  const rows = comments.map(c => {
+    const a = state.users[c.author] || { displayName: 'Гражданин', username: 'unknown' };
+    return `
+      <div class="comment">
+        ${avatarHtml(a, 'avatar-xs')}
+        <div class="comment-body">
+          <div class="comment-head">
+            <b class="clickable" data-action="open-profile" data-uid="${esc(c.author)}">${esc(a.displayName)}</b>
+            <span>@${esc(a.username)} · ${timeAgo(c.createdAt)}</span>
+          </div>
+          <div>${linkify(esc(c.text))}</div>
+        </div>
+      </div>`;
+  }).join('') || `<div class="muted small">Пока нет комментариев</div>`;
+
+  return `
+  <div class="comments">
+    ${rows}
+    <div class="comment-form">
+      <input id="comment-${esc(p.id)}" data-draft="${esc(p.id)}"
+             placeholder="Написать комментарий..." maxlength="500"
+             value="${esc(state.commentDrafts[p.id] || '')}">
+      <button class="btn primary sm" data-action="send-comment" data-id="${esc(p.id)}">→</button>
+    </div>
+  </div>`;
+}
+
+/* ---------- Профиль ---------- */
+function renderProfile(){
+  const wrap = $('#viewProfile');
+  const uid = state.profileUid || meUid;
+  const u = state.users[uid];
+
+  if (!u){
+    wrap.innerHTML = `<div class="empty panel">Гражданин не найден</div>`;
+    return;
+  }
+
+  const isMe = uid === meUid;
+  const followers = Object.values(state.users).filter(x => x.following && x.following[uid]).length;
+  const posts = sortedPosts().filter(p => p.author === uid);
+
+  if (isMe && state.editing){
+    wrap.innerHTML = `
+      <div class="panel">
+        <h2>Редактировать профиль</h2>
+        <div class="field"><label>Имя</label>
+          <input id="editName" maxlength="40" value="${esc(u.displayName)}"></div>
+        <div class="field"><label>О себе</label>
+          <textarea id="editBio" maxlength="300" placeholder="Расскажите о себе...">${esc(u.bio || '')}</textarea></div>
+        <div class="field"><label>Ссылка на аватар</label>
+          <input id="editAvatar" placeholder="https://..." value="${esc(u.avatar || '')}"></div>
+        <div style="display:flex;gap:8px">
+          <button class="btn primary" data-action="save-profile">Сохранить</button>
+          <button class="btn ghost" data-action="cancel-edit">Отмена</button>
+        </div>
+      </div>`;
+    return;
+  }
+
+  const followBtn = isMe ? '' : `
+    <button class="btn ${isFollowing(uid) ? 'ghost' : 'primary'}"
+            data-action="follow" data-uid="${esc(uid)}">
+      ${isFollowing(uid) ? 'Отписаться' : 'Подписаться'}
+    </button>`;
+
+  wrap.innerHTML = `
+    <div class="profile-head panel">
+      <div class="profile-cover"></div>
+      <div class="profile-body">
+        ${avatarHtml(u, 'avatar-xl')}
+        <div class="profile-info">
+          <h2>${esc(u.displayName)}</h2>
+          <div class="handle">@${esc(u.username)}${isMe ? ' · это вы' : ''}</div>
+          <div class="bio">${u.bio ? esc(u.bio) : '<span class="muted">Без описания</span>'}</div>
+          <div class="stats">
+            <div><b>${posts.length}</b> записей</div>
+            <div><b>${followers}</b> подписчиков</div>
+            <div><b>${Object.keys(u.following || {}).length}</b> подписок</div>
+          </div>
+        </div>
+        <div class="profile-actions">
+          ${isMe ? '<button class="btn ghost" data-action="edit-profile">Редактировать</button>' : followBtn}
+        </div>
+      </div>
+    </div>
+    <div>${posts.length
+      ? posts.map(postCardHTML).join('')
+      : '<div class="empty panel">Здесь пока нет записей</div>'}</div>`;
+}
+
+/* ---------- Люди ---------- */
+function renderPeople(){
+  const wrap = $('#viewPeople');
+  wrap.innerHTML = `
+    <div class="panel">
+      <h2>Граждане Республики</h2>
+      <input id="peopleSearch" class="search" placeholder="Поиск по имени или никнейму"
+             value="${esc(state.search)}">
+    </div>
+    <div id="peopleList" class="people-list"></div>`;
+  renderPeopleList();
+}
+
+function renderPeopleList(){
+  const box = $('#peopleList');
+  if (!box) return;
+  const q = state.search.trim().toLowerCase();
+
+  const users = Object.values(state.users)
+    .filter(u => u.uid !== meUid)
+    .filter(u => !q
+      || (u.displayName || '').toLowerCase().includes(q)
+      || (u.username || '').toLowerCase().includes(q))
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+  if (!users.length){
+    box.innerHTML = `<div class="empty panel">Никого не найдено</div>`;
+    return;
+  }
+
+  box.innerHTML = users.map(u => {
+    const f = isFollowing(u.uid);
+    return `
+      <div class="people-row">
+        ${avatarHtml(u, 'avatar-md')}
+        <div class="info" data-action="open-profile" data-uid="${esc(u.uid)}">
+          <div class="name">${esc(u.displayName)}</div>
+          <div class="handle">@${esc(u.username)}${u.bio ? ' · ' + esc(u.bio.slice(0, 50)) : ''}</div>
+        </div>
+        <button class="btn sm ${f ? 'ghost' : 'primary'}" data-action="follow" data-uid="${esc(u.uid)}">
+          ${f ? 'Отписаться' : 'Читать'}
+        </button>
+      </div>`;
+  }).join('');
+}
+
+/* ---------- Уведомления ---------- */
+function renderNotifications(){
+  const items = [];
+
+  Object.values(state.posts).forEach(p => {
+    if (p.author !== meUid) return;
+
+    Object.entries(p.likes || {}).forEach(([uid, ts]) => {
+      if (uid !== meUid) items.push({ type: 'like', from: uid, post: p, time: ts || 0 });
+    });
+
+    Object.values(p.comments || {}).forEach(c => {
+      if (c.author !== meUid) items.push({ type: 'comment', from: c.author, post: p, time: c.createdAt || 0, text: c.text });
+    });
+  });
+
+  items.sort((a, b) => b.time - a.time);
+
+  const wrap = $('#viewNotifications');
+  if (!items.length){
+    wrap.innerHTML = `<div class="empty panel">Пока тихо. Лайки и комментарии появятся здесь 🔔</div>`;
+    return;
+  }
+
+  wrap.innerHTML = `<div class="panel"><h2>Уведомления</h2></div>` +
+    items.slice(0, 60).map(it => {
+      const u = state.users[it.from] || { displayName: 'Гражданин', username: 'unknown' };
+      const action = it.type === 'like' ? 'оценил вашу запись' : 'прокомментировал вашу запись';
+      return `
+        <div class="notif">
+          <div class="ico">${it.type === 'like' ? '❤️' : '💬'}</div>
+          <div style="flex:1;min-width:0">
+            <div>
+              <b class="clickable" data-action="open-profile" data-uid="${esc(it.from)}">${esc(u.displayName)}</b>
+              <span class="muted"> ${action} · ${timeAgo(it.time)}</span>
+            </div>
+            <div class="muted small" style="margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+              ${esc((it.text || it.post.text || '').slice(0, 90))}
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+}
+
+/* ---------- Правая панель ---------- */
+function renderRight(){
+  const me = myUser();
+  const following = me.following || {};
+
+  const suggestions = Object.values(state.users)
+    .filter(u => u.uid !== meUid && !following[u.uid])
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+    .slice(0, 5);
+
+  $('#suggestions').innerHTML = suggestions.map(miniUserHTML).join('')
+    || '<div class="muted small">Вы уже читаете всех 🎉</div>';
+
+  renderSearchResults($('#globalSearch').value);
+}
+
+function renderSearchResults(q){
+  q = (q || '').trim().toLowerCase();
+  const box = $('#searchResults');
+  if (!q){ box.innerHTML = ''; return; }
+
+  const res = Object.values(state.users)
+    .filter(u => u.uid !== meUid)
+    .filter(u => (u.displayName || '').toLowerCase().includes(q)
+              || (u.username || '').toLowerCase().includes(q))
+    .slice(0, 6);
+
+  box.innerHTML = res.map(miniUserHTML).join('')
+    || '<div class="muted small">Никого не найдено</div>';
+}
+
+function miniUserHTML(u){
+  const f = isFollowing(u.uid);
+  return `
+    <div class="mini-user">
+      <div class="clickable" data-action="open-profile" data-uid="${esc(u.uid)}">${avatarHtml(u, 'avatar-sm')}</div>
+      <div class="mini-info" data-action="open-profile" data-uid="${esc(u.uid)}">
+        <div class="name">${esc(u.displayName)}</div>
+        <div class="handle">@${esc(u.username)}</div>
+      </div>
+      <button class="btn sm ${f ? 'ghost' : 'primary'}" data-action="follow" data-uid="${esc(u.uid)}">
+        ${f ? 'Отписаться' : 'Читать'}
+      </button>
+    </div>`;
+}
 
 /* ------------------------- Действия ------------------------- */
 document.addEventListener('click', async e => {
@@ -241,7 +517,6 @@ document.addEventListener('click', async e => {
 
   try {
     switch (action){
-
       case 'nav': {
         e.preventDefault();
         state.view = el.dataset.view;
@@ -368,7 +643,7 @@ async function publish(){
   const ref = db.ref('posts').push();
   await ref.set({
     id: ref.key,
-    author: meUid,      // ← author всегда текущий auth.uid
+    author: meUid,
     text,
     image,
     createdAt: Date.now()
@@ -405,6 +680,3 @@ document.addEventListener('keydown', e => {
     publish();
   }
 });
-
-/* Старт приложения управляется auth.onAuthStateChanged выше.
-   Никакой отдельной boot-функции больше не нужно. */
