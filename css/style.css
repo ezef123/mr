@@ -183,6 +183,22 @@ textarea{resize:vertical;min-height:64px}
   border-radius:12px;margin-bottom:8px;align-items:flex-start}
 .notif .ico{font-size:18px}
 
+/* ---------- Верифицированный аккаунт ---------- */
+.verified-badge{
+  display:inline-block;
+  width:16px;
+  height:16px;
+  vertical-align:-3px;
+  margin-left:4px;
+  flex:none;
+}
+.people-row .name .verified-badge,
+.post-meta .name .verified-badge,
+.mini-user .name .verified-badge{
+  width:15px;
+  height:15px;
+}
+
 /* ---------- Тост ---------- */
 #toast{
   position:fixed;left:50%;bottom:26px;transform:translate(-50%,20px);opacity:0;pointer-events:none;
@@ -204,19 +220,4 @@ textarea{resize:vertical;min-height:64px}
   .nav-item{padding:9px 12px;font-size:13.5px;white-space:nowrap}
   #userCard{display:none}
   .side-foot{display:none}
-}
-
-/* Верифицированный аккаунт */
-.verified-badge{
-  display:inline-block;
-  width:16px;
-  height:16px;
-  vertical-align:-3px;
-  margin-left:4px;
-  flex:none;
-}
-.people-row .name .verified-badge,
-.post-meta .name .verified-badge{
-  width:15px;
-  height:15px;
 }
