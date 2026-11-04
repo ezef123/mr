@@ -1,0 +1,68 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "users": {
+      ".read": true,
+      "$uid": {
+        ".write": "!data.exists() || data.child('uid').val() === $uid",
+        ".validate": "newData.hasChildren(['uid','username','usernameLower','displayName','createdAt'])",
+        "uid":           { ".validate": "newData.val() === $uid" },
+        "username":      { ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 20" },
+        "usernameLower": { ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 20" },
+        "displayName":   { ".validate": "newData.isString() && newData.val().length >= 2 && newData.val().length <= 40" },
+        "bio":           { ".validate": "newData.isString() && newData.val().length <= 300" },
+        "avatar":        { ".validate": "newData.isString() && newData.val().length <= 500" },
+        "createdAt":     { ".validate": "newData.isNumber()" },
+        "following": {
+          "$followedUid": {
+            ".validate": "newData.isBoolean() && root.child('users').child($followedUid).exists()"
+          }
+        }
+      }
+    },
+
+    "usernames": {
+      ".read": true,
+      "$username": {
+        ".write": "!data.exists() && root.child('users').child(newData.val()).child('usernameLower').val() === $username",
+        ".validate": "newData.isString() && root.child('users').child(newData.val()).child('usernameLower').val() === $username"
+      }
+    },
+
+    "secrets": {
+      "$uid": {
+        ".read": true,
+        ".write": "!data.exists() && root.child('users').child($uid).exists()",
+        "pass": { ".validate": "newData.isString()" }
+      }
+    },
+
+    "posts": {
+      ".read": true,
+      ".indexOn": ["createdAt", "author"],
+      "$postId": {
+        ".write": "!data.exists() || (data.child('author').val() === newData.child('author').val())",
+        ".validate": "newData.hasChildren(['id','author','createdAt'])",
+        "id":        { ".validate": "newData.val() === $postId" },
+        "author":    { ".validate": "newData.isString() && root.child('users').child(newData.val()).exists()" },
+        "text":      { ".validate": "newData.isString() && newData.val().length <= 1000" },
+        "image":     { ".validate": "newData.isString() && newData.val().length <= 500" },
+        "createdAt": { ".validate": "newData.isNumber()" },
+        "likes": {
+          "$uid": { ".validate": "newData.isNumber()" }
+        },
+        "comments": {
+          "$commentId": {
+            ".validate": "newData.hasChildren(['id','author','text','createdAt'])",
+            "id":        { ".validate": "newData.val() === $commentId" },
+            "author":    { ".validate": "newData.isString() && root.child('users').child(newData.val()).exists()" },
+            "text":      { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 500" },
+            "createdAt": { ".validate": "newData.isNumber()" }
+          }
+        }
+      }
+    }
+  }
+}
