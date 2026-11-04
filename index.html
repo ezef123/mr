@@ -7,6 +7,7 @@
 
 <!-- Firebase SDK (compat) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 
 <link rel="stylesheet" href="css/style.css">
@@ -24,30 +25,41 @@
       <button class="tab" data-authtab="register">Регистрация</button>
     </div>
 
+    <!-- ВХОД: email + пароль -->
     <form id="loginForm">
       <div class="field">
-        <label>Никнейм</label>
-        <input id="loginUser" placeholder="zhakid_citizen" autocomplete="username" required>
+        <label>Email</label>
+        <input id="loginEmail" type="email" placeholder="citizen@zhakid.rep"
+               autocomplete="email" required>
       </div>
       <div class="field">
         <label>Пароль</label>
-        <input id="loginPass" type="password" placeholder="••••••••" autocomplete="current-password" required>
+        <input id="loginPass" type="password" placeholder="••••••••"
+               autocomplete="current-password" required>
       </div>
       <button class="btn primary" style="width:100%;margin-top:6px" type="submit">Войти</button>
     </form>
 
+    <!-- РЕГИСТРАЦИЯ: имя, ник, email, пароль -->
     <form id="registerForm" class="hidden">
       <div class="field">
         <label>Имя и фамилия</label>
         <input id="regName" placeholder="Иван Жакидов" maxlength="40" required>
       </div>
       <div class="field">
-        <label>Никнейм</label>
-        <input id="regUser" placeholder="ivan_zh" maxlength="20" required>
+        <label>Никнейм (без @)</label>
+        <input id="regUser" placeholder="ivan_zh" maxlength="20"
+               pattern="[a-zA-Z0-9_]{3,20}" required>
       </div>
       <div class="field">
-        <label>Пароль</label>
-        <input id="regPass" type="password" placeholder="минимум 4 символа" autocomplete="new-password" required>
+        <label>Email</label>
+        <input id="regEmail" type="email" placeholder="citizen@zhakid.rep"
+               autocomplete="email" required>
+      </div>
+      <div class="field">
+        <label>Пароль (минимум 6 символов)</label>
+        <input id="regPass" type="password" placeholder="минимум 6 символов"
+               autocomplete="new-password" minlength="6" required>
       </div>
       <button class="btn primary" style="width:100%;margin-top:6px" type="submit">Создать аккаунт</button>
     </form>
@@ -59,7 +71,6 @@
 <!-- ================= ПРИЛОЖЕНИЕ ================= -->
 <div class="layout hidden" id="app">
 
-  <!-- ЛЕВАЯ ПАНЕЛЬ -->
   <aside class="sidebar">
     <div class="logo"><span class="ico">🏛</span><span>Моя<b>Республика</b></span></div>
     <nav class="nav">
@@ -73,9 +84,7 @@
     <div class="side-foot">Республика Жакид · 2026</div>
   </aside>
 
-  <!-- ЦЕНТР -->
   <main class="main">
-
     <section id="viewFeed" class="view">
       <div class="composer panel">
         <div id="composerAvatar"></div>
@@ -100,10 +109,8 @@
     <section id="viewProfile" class="view hidden"></section>
     <section id="viewPeople" class="view hidden"></section>
     <section id="viewNotifications" class="view hidden"></section>
-
   </main>
 
-  <!-- ПРАВАЯ ПАНЕЛЬ -->
   <aside class="rightbar">
     <div class="panel">
       <input id="globalSearch" class="search" placeholder="🔍 Поиск людей">
@@ -121,7 +128,6 @@
 
 <div id="toast"></div>
 
-<!-- Порядок подключения важен! -->
 <script src="js/firebase-config.js"></script>
 <script src="js/utils.js"></script>
 <script src="js/app.js"></script>
